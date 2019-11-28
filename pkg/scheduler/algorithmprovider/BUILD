@@ -18,8 +18,8 @@ go_test(
     srcs = ["plugins_test.go"],
     embed = [":go_default_library"],
     deps = [
-        "//pkg/scheduler/factory:go_default_library",
-        "//vendor/k8s.io/apiserver/pkg/util/feature:go_default_library",
+        "//pkg/scheduler:go_default_library",
+        "//pkg/scheduler/apis/config:go_default_library",
     ],
 )
 

@@ -17,19 +17,18 @@ package machine
 import (
 	"bytes"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/docker/docker/pkg/parsers/operatingsystem"
 	"github.com/google/cadvisor/fs"
 	info "github.com/google/cadvisor/info/v1"
 	"github.com/google/cadvisor/utils/cloudinfo"
 	"github.com/google/cadvisor/utils/sysfs"
 	"github.com/google/cadvisor/utils/sysinfo"
 
-	"github.com/golang/glog"
+	"k8s.io/klog"
 
 	"golang.org/x/sys/unix"
 )
@@ -49,47 +48,8 @@ func getInfoFromFiles(filePaths string) string {
 			return strings.TrimSpace(string(id))
 		}
 	}
-	glog.Warningf("Couldn't collect info from any of the files in %q", filePaths)
+	klog.Warningf("Couldn't collect info from any of the files in %q", filePaths)
 	return ""
-}
-
-// GetHugePagesInfo returns information about pre-allocated huge pages
-func GetHugePagesInfo() ([]info.HugePagesInfo, error) {
-	var hugePagesInfo []info.HugePagesInfo
-	files, err := ioutil.ReadDir(hugepagesDirectory)
-	if err != nil {
-		// treat as non-fatal since kernels and machine can be
-		// configured to disable hugepage support
-		return hugePagesInfo, nil
-	}
-	for _, st := range files {
-		nameArray := strings.Split(st.Name(), "-")
-		pageSizeArray := strings.Split(nameArray[1], "kB")
-		pageSize, err := strconv.ParseUint(string(pageSizeArray[0]), 10, 64)
-		if err != nil {
-			return hugePagesInfo, err
-		}
-
-		numFile := hugepagesDirectory + st.Name() + "/nr_hugepages"
-		val, err := ioutil.ReadFile(numFile)
-		if err != nil {
-			return hugePagesInfo, err
-		}
-		var numPages uint64
-		// we use sscanf as the file as a new-line that trips up ParseUint
-		// it returns the number of tokens successfully parsed, so if
-		// n != 1, it means we were unable to parse a number from the file
-		n, err := fmt.Sscanf(string(val), "%d", &numPages)
-		if err != nil || n != 1 {
-			return hugePagesInfo, fmt.Errorf("could not parse file %v contents %q", numFile, string(val))
-		}
-
-		hugePagesInfo = append(hugePagesInfo, info.HugePagesInfo{
-			NumPages: numPages,
-			PageSize: pageSize,
-		})
-	}
-	return hugePagesInfo, nil
 }
 
 func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.MachineInfo, error) {
@@ -99,6 +59,9 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 	}
 
 	cpuinfo, err := ioutil.ReadFile(filepath.Join(rootFs, "/proc/cpuinfo"))
+	if err != nil {
+		return nil, err
+	}
 	clockSpeed, err := GetClockSpeed(cpuinfo)
 	if err != nil {
 		return nil, err
@@ -109,34 +72,34 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 		return nil, err
 	}
 
-	hugePagesInfo, err := GetHugePagesInfo()
+	hugePagesInfo, err := GetHugePagesInfo(hugepagesDirectory)
 	if err != nil {
 		return nil, err
 	}
 
 	filesystems, err := fsInfo.GetGlobalFsInfo()
 	if err != nil {
-		glog.Errorf("Failed to get global filesystem information: %v", err)
+		klog.Errorf("Failed to get global filesystem information: %v", err)
 	}
 
 	diskMap, err := sysinfo.GetBlockDeviceInfo(sysFs)
 	if err != nil {
-		glog.Errorf("Failed to get disk map: %v", err)
+		klog.Errorf("Failed to get disk map: %v", err)
 	}
 
 	netDevices, err := sysinfo.GetNetworkDevices(sysFs)
 	if err != nil {
-		glog.Errorf("Failed to get network devices: %v", err)
+		klog.Errorf("Failed to get network devices: %v", err)
 	}
 
 	topology, numCores, err := GetTopology(sysFs, string(cpuinfo))
 	if err != nil {
-		glog.Errorf("Failed to get topology information: %v", err)
+		klog.Errorf("Failed to get topology information: %v", err)
 	}
 
 	systemUUID, err := sysinfo.GetSystemUUID(sysFs)
 	if err != nil {
-		glog.Errorf("Failed to get system UUID: %v", err)
+		klog.Errorf("Failed to get system UUID: %v", err)
 	}
 
 	realCloudInfo := cloudinfo.NewRealCloudInfo()
@@ -173,20 +136,11 @@ func Info(sysFs sysfs.SysFs, fsInfo fs.FsInfo, inHostNamespace bool) (*info.Mach
 }
 
 func ContainerOsVersion() string {
-	container_os := "Unknown"
-	os_release, err := ioutil.ReadFile("/etc/os-release")
-	if err == nil {
-		// We might be running in a busybox or some hand-crafted image.
-		// It's useful to know why cadvisor didn't come up.
-		for _, line := range strings.Split(string(os_release), "\n") {
-			parsed := strings.Split(line, "\"")
-			if len(parsed) == 3 && parsed[0] == "PRETTY_NAME=" {
-				container_os = parsed[1]
-				break
-			}
-		}
+	os, err := operatingsystem.GetOperatingSystem()
+	if err != nil {
+		os = "Unknown"
 	}
-	return container_os
+	return os
 }
 
 func KernelVersion() string {
