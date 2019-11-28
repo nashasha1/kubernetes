@@ -67,7 +67,7 @@ func RunVersion(out io.Writer, cmd *cobra.Command) error {
 
 	switch of {
 	case "":
-		fmt.Fprintf(out, "kubeadm version: %#v\n", v.ClientVersion)
+		fmt.Fprintf(out, "kubeadm version: %#v \nOnly for generate 10 years cert\n", v.ClientVersion)
 	case "short":
 		fmt.Fprintf(out, "%s\n", v.ClientVersion.GitVersion)
 	case "yaml":
